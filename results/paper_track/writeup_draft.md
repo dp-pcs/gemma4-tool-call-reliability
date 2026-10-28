@@ -6,7 +6,7 @@
 
 ## Abstract
 
-Building a Gemma 4–based agent for the Kaggle Gemma 4 Developer Agent competition, we found two independent, silent tool-interface failures — failures that give the agent no actionable error signal and are invisible in aggregate resolution-rate metrics. The first: 710 of 2,515 `edit_file` calls (28.2%) arrived at the harness missing their `old_string` argument. We falsify the attractive "naive colon-splitter parser" explanation using the actual Apache-2.0 open-source vLLM Gemma 4 parser code (which uses explicit string delimiters, not colon parsing) plus a clean control group of 14,127 `run_command` calls (colon-dense, zero corruption). The root cause remains open. The second: the agent's verification step pipes pytest output through `tail`, and bash reports `tail`'s exit code — not pytest's — so **failing tests can look like passes** to the agent; 85 of the agent's pytest calls across 65 of 285 runs were affected. A single command change (redirect + capture `$?`) is the complete fix. We also report three independent calibration and methodology lessons from the same project.
+Building a Gemma 4–based agent for the Kaggle Gemma 4 Developer Agent competition, we found two independent, silent tool-interface failures — failures that give the agent no actionable error signal and are invisible in aggregate resolution-rate metrics. The first: 710 of 2,515 `edit_file` calls (28.2%) arrived at the harness missing their `old_string` argument. We falsify the attractive "naive colon-splitter parser" explanation using the actual Apache-2.0 open-source vLLM Gemma 4 parser code (which uses explicit string delimiters, not colon parsing) plus a clean control group of 14,127 `run_command` calls (colon-dense, zero corruption). The root cause remains open. The second: the agent's verification step pipes pytest output through `tail`, and bash reports `tail`'s exit code — not pytest's — so **failing tests can look like passes** to the agent; 85 of the agent's pytest calls across 65 of 285 runs were affected. This is a prompt-level scaffold bug with a single-line fix; its effect on task resolution is not yet measured. We also report three independent calibration and methodology lessons from the same project.
 
 ---
 
@@ -81,14 +81,14 @@ In bash, the exit status of a pipeline is the exit status of its **last command*
 
 ### 4.2 The mechanism
 
-When pytest reports failing tests (exit code 1) or a collection error (exit code 2), the pipeline masks both as success. The agent, seeing no error exit code, may conclude its fix is working and proceed toward submission with a patch that fails the actual hidden tests.
+This is a scaffold-level bug in our own prompt, not a defect in pytest, bash, or the harness: we instructed the agent to run a command whose exit code it cannot trust. When pytest reports failing tests (exit code 1) or a collection error (exit code 2), the pipeline masks both as success. The agent, seeing no error exit code, may conclude its fix is working and proceed toward submission with a patch that fails the actual hidden tests. We flag it because the same mistake is easy to make in any agent scaffold that composes shell pipelines for verification, not because it is specific to this competition's infrastructure.
 
-### 4.3 The fix
+### 4.3 The fix, and what remains unmeasured
 
 ```
 timeout 150 python -m pytest tests/path.py -x -q -k keyword > /tmp/t.log 2>&1; ec=$?; tail -25 /tmp/t.log; echo "EXIT:$ec"
 ```
-Redirect to a file, capture `$?` immediately after pytest (before any subsequent command can overwrite it), then show the tail and print the saved exit code explicitly. The agent now sees `EXIT:1` when tests fail.
+Redirect to a file, capture `$?` immediately after pytest (before any subsequent command can overwrite it), then show the tail and print the saved exit code explicitly. The agent now sees `EXIT:1` when tests fail. We have implemented and committed this fix but have not yet completed a paired screen measuring its effect on task resolution rate; we report the mechanism and the fix's correctness, not yet a resolution-rate improvement.
 
 ---
 
@@ -96,7 +96,7 @@ Redirect to a file, capture `$?` immediately after pytest (before any subsequent
 
 At N=5 concurrent tasks per GPU (A100), our best arm (`T3_5m`) resolved 37/114 (32.5%), mean task duration 284 s. The competition scorer's hardware (4×L4) has a measured single-stream decode rate of 34.3 tok/s, roughly 79% of our local rate. Recalibrating to N=8 concurrent tasks — matching the throughput ratio — dropped the same arm to 28/114 (24.6%), mean 302 s, with 79/114 runs now hitting the 5-minute cap. An 8-percentage-point swing from changing one concurrency parameter, without changing the agent prompt.
 
-One calibration caveat is worth noting: the `duration_seconds` field our matrix runner saves includes both the agent loop and the grading/verification step (Phase 2). A separate analysis of 1,140 runs found that grading adds roughly 25–30 s to a typical 300–450 s task (about 7–9%), making duration-based extrapolations slightly high as estimates of pure agent time. This does not change the conclusion about concurrency sensitivity, but it does affect any precise claim about rig-vs-scorer timing margin.
+One calibration caveat is worth noting: the `duration_seconds` field our matrix runner saves includes both the agent loop and the grading/verification step (Phase 2). A separate analysis of 1,140 runs found that grading adds roughly 25–30 s to a typical 300–450 s task (about 7–9%). Removing that overhead from our highest-concurrency arm's measured mean (444.8 s) leaves roughly 415 s of agent-only time per task; extrapolated across ~120 sequential hidden tasks, that is still approximately 13.8 hours — over the real 12-hour budget — yet the actual submission at this configuration completed successfully. We do not have a confirmed explanation for the remaining gap (candidates include prefill contention under local concurrency that a sequential scorer does not experience, or hidden tasks that are shorter on average than our 38-task local sample). We do not claim the local rig is calibrated to the scorer; the safer conclusion is that timeouts measured on the local rig likely overstate what the scorer would produce, in an amount we have not pinned down.
 
 The practical lesson: agent benchmarks under a wall-clock budget are more sensitive to concurrency than to raw token throughput, because concurrency determines how many runs hit the timeout boundary rather than completing. Absolute resolution-rate estimates varied by several percentage points between rig settings. Relative rankings across arms proved more stable across both local settings and on the public leaderboard, suggesting relative comparisons are the more defensible signal from a local rig.
 

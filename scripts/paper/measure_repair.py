@@ -180,6 +180,14 @@ def process_dirs(bases: list[str]) -> dict:
 
     return {
         "source_dirs": bases,
+        "note": (
+            "This summary's timeout-recovery rate is specific to the source_dirs listed above "
+            "(the 1,140-run prompt-comparison corpus from 2026-10-14/15). A separate, broader "
+            "corpus (harvest2 + other eval-matrix runs, 742 timed-out-with-patch cases) showed a "
+            "higher resolution-among-timeouts rate (~35%, 262/742). Both are real measurements of "
+            "the same phenomenon on different run populations; do not treat either as the single "
+            "'true' rate without citing which corpus it came from."
+        ),
         "totals": {
             "runs": totals["runs"],
             "resolved": totals["resolved"],
