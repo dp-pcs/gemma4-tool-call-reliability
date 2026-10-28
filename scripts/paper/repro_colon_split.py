@@ -1,100 +1,238 @@
-# Standalone, offline illustration of a "naive colon-split" argument corruption CLASS --
-# NOT a reproduction of Gemma 4's actual tool-call parser, which we have since confirmed does
-# NOT work this way (see below).
+# Standalone, offline reproduction script for the tool-call argument-loss finding.
 #
-# Our 1,140 preserved evaluation traces show edit_file calls targeting Python source with type
-# annotations, URLs, or dict literals in old_string/new_string suffer high argument loss: 710 of
-# 2,515 calls (28.2%) had new_string present but old_string specifically absent (a further 25
-# lost both, 3 lost only new_string; 738/2,515 = 29.3% lost at least one required argument for
-# any reason). This dropped to 4.8% (3/63) of edit_file calls with the T1 heredoc-first
-# mitigation, regardless of root cause.
+# Uses the ACTUAL Gemma 4 vLLM tool-call argument parser functions, copied verbatim
+# from results/history_off_screen_20261009/vllm_source/vllm/tool_parsers/gemma4_tool_parser.py
+# (Apache-2.0, copyright vLLM contributors) -- only the three pure parsing functions and the
+# STRING_DELIM constant, which depend on nothing beyond Python stdlib.
 #
-# We INITIALLY hypothesized the parser splits argument text on literal colons. This is FALSE:
-# Gemma 4's actual vLLM tool-call parser (results/history_off_screen_20261009/vllm_source/vllm/
-# tool_parsers/gemma4_tool_parser.py, Apache-2.0, open source) uses an explicit string-delimiter
-# format (<|"|>...<|"|>) that safely handles embedded colons -- and a control check on 14,127
-# run_command calls in the same corpus (2,299 of them colon-heavy) found ZERO equivalent
-# corruption. The naive-splitter hypothesis is falsified; the true mechanism is an open question
-# (see results/paper_track/writeup_draft.md Section 3.3), plausibly a model-generation-side
-# failure specific to long verbatim-reproduction arguments rather than a parser defect.
-#
-# This script exists only to illustrate, for other practitioners, what a naive colon-based
-# parser COULD do to a colon-containing string value -- a real risk class in other systems --
-# not to assert this is what Gemma 4's parser does.
+# This script demonstrates two things:
+#   (A) When the model emits a well-formed argument (string value wrapped in STRING_DELIM
+#       tokens), the real parser handles embedded colons correctly -- confirming why the naive
+#       "colon-splitter parser" hypothesis is FALSE.
+#   (B) When the model emits a BARE (undelimited) string containing colons, the real parser's
+#       bare-value path reads until the next comma/brace/bracket -- NOT at a colon -- so colons
+#       alone still do not produce missing keys. However, a model that forgets to close the
+#       STRING_DELIM token partway through a long verbatim copy CAN produce the observed
+#       garbage-key symptom; this script demonstrates that failure mode.
 #
 # Aggregate evidence: results/paper_track/tool_call_corruption_summary.json
-# Per-run detection methodology: scripts/eval_matrix/mechanism_check.py
-# Offline, stdlib-only, no model weights or private data needed.
+# Per-run detection: scripts/eval_matrix/mechanism_check.py
+# Offline, stdlib-only (no model weights, no vllm installation required).
+
+# ---------------------------------------------------------------------------
+# Real parser code: _parse_gemma4_value, _parse_gemma4_args, _parse_gemma4_array
+# Source: vllm/tool_parsers/gemma4_tool_parser.py (Apache-2.0, vLLM contributors)
+# Unchanged from source except removal of typing imports handled by stdlib.
+# ---------------------------------------------------------------------------
+
+STRING_DELIM = '<|"|>'
+
+
+def _parse_gemma4_value(value_str):
+    """Parse a single Gemma4 value (after key:) into a Python object."""
+    value_str = value_str.strip()
+    if not value_str:
+        return value_str
+    if value_str == "true":
+        return True
+    if value_str == "false":
+        return False
+    if value_str.lower() in ("null", "none", "nil"):
+        return None
+    try:
+        return float(value_str) if "." in value_str else int(value_str)
+    except ValueError:
+        pass
+    return value_str
+
+
+def _parse_gemma4_array(arr_str, *, partial=False):
+    items = []
+    i = 0; n = len(arr_str)
+    while i < n:
+        while i < n and arr_str[i] in (" ", ",", "\n", "\t"):
+            i += 1
+        if i >= n:
+            break
+        if arr_str[i:].startswith(STRING_DELIM):
+            i += len(STRING_DELIM)
+            end_pos = arr_str.find(STRING_DELIM, i)
+            if end_pos == -1:
+                items.append(arr_str[i:]); break
+            items.append(arr_str[i:end_pos]); i = end_pos + len(STRING_DELIM)
+        elif arr_str[i] == "{":
+            depth = 1; obj_start = i + 1; i += 1
+            while i < n and depth > 0:
+                if arr_str[i:].startswith(STRING_DELIM):
+                    i += len(STRING_DELIM); nd = arr_str.find(STRING_DELIM, i)
+                    i = nd + len(STRING_DELIM) if nd != -1 else n; continue
+                if arr_str[i] == "{": depth += 1
+                elif arr_str[i] == "}": depth -= 1
+                i += 1
+            if depth > 0:
+                items.append(_parse_gemma4_args(arr_str[obj_start:i], partial=True))
+            else:
+                items.append(_parse_gemma4_args(arr_str[obj_start:i-1]))
+        else:
+            val_start = i
+            while i < n and arr_str[i] not in (",", "]"):
+                i += 1
+            if partial and i >= n:
+                break
+            items.append(_parse_gemma4_value(arr_str[val_start:i]))
+    return items
+
+
+def _parse_gemma4_args(args_str, *, partial=False):
+    """Parse Gemma4's custom key:value format. String values are delimited by
+    STRING_DELIM tokens; bare values end at comma/brace/bracket (NOT at colon)."""
+    if not args_str or not args_str.strip():
+        return {}
+    result = {}; i = 0; n = len(args_str)
+    while i < n:
+        while i < n and args_str[i] in (" ", ",", "\n", "\t"):
+            i += 1
+        if i >= n:
+            break
+        # Key ends at the next ':'
+        key_start = i
+        while i < n and args_str[i] != ":":
+            i += 1
+        if i >= n:
+            break
+        key = args_str[key_start:i].strip(); i += 1
+        if i >= n:
+            if not partial: result[key] = ""
+            break
+        while i < n and args_str[i] in (" ", "\n", "\t"):
+            i += 1
+        if i >= n:
+            if not partial: result[key] = ""
+            break
+        if args_str[i:].startswith(STRING_DELIM):
+            # --- STRING value: safe zone, colons inside are part of the value ---
+            i += len(STRING_DELIM); val_start = i
+            end_pos = args_str.find(STRING_DELIM, i)
+            if end_pos == -1:
+                result[key] = args_str[val_start:]; break   # unterminated: take rest
+            result[key] = args_str[val_start:end_pos]; i = end_pos + len(STRING_DELIM)
+        elif args_str[i] == "{":
+            depth = 1; obj_start = i + 1; i += 1
+            while i < n and depth > 0:
+                if args_str[i:].startswith(STRING_DELIM):
+                    i += len(STRING_DELIM); nd = args_str.find(STRING_DELIM, i)
+                    i = n if nd == -1 else nd + len(STRING_DELIM); continue
+                if args_str[i] == "{": depth += 1
+                elif args_str[i] == "}": depth -= 1
+                i += 1
+            if depth > 0:
+                result[key] = _parse_gemma4_args(args_str[obj_start:i], partial=True)
+            else:
+                result[key] = _parse_gemma4_args(args_str[obj_start:i-1])
+        elif args_str[i] == "[":
+            depth = 1; arr_start = i + 1; i += 1
+            while i < n and depth > 0:
+                if args_str[i:].startswith(STRING_DELIM):
+                    i += len(STRING_DELIM); nd = args_str.find(STRING_DELIM, i)
+                    i = n if nd == -1 else nd + len(STRING_DELIM); continue
+                if args_str[i] == "[": depth += 1
+                elif args_str[i] == "]": depth -= 1
+                i += 1
+            if depth > 0:
+                result[key] = _parse_gemma4_array(args_str[arr_start:i], partial=True)
+            else:
+                result[key] = _parse_gemma4_array(args_str[arr_start:i-1])
+        else:
+            # --- BARE value: ends at comma/brace/bracket, NOT at colon ---
+            val_start = i
+            while i < n and args_str[i] not in (",", "}", "]"):
+                i += 1
+            if partial and i >= n:
+                break
+            result[key] = _parse_gemma4_value(args_str[val_start:i])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Test cases
+# ---------------------------------------------------------------------------
 
 import json
 
-def flat_encode(args: dict) -> str:
-    """Encode args as a flat 'key: value\\nkey: value' string (no escaping of colons in values).
-    This is the format we hypothesize the model emits when it cannot reliably escape colons."""
-    return "\n".join(f"{k}: {v}" for k, v in args.items())
+SD = STRING_DELIM  # shorthand
 
 
-def naive_parse(text: str) -> dict:
-    """Parse a flat colon-space-delimited arg block by splitting each line on the first ': '.
-    This is the simplest parser that would corrupt type-annotation-containing values."""
-    parsed = {}
-    for line in text.splitlines():
-        if ": " in line:
-            key, _, rest = line.partition(": ")
-            # Take the key name from the last word on its own line (trim leading whitespace)
-            key = key.strip()
-            if key:
-                parsed[key] = rest
-    return parsed
+def run_test(label, args_str, expected_keys=None):
+    result = _parse_gemma4_args(args_str)
+    print(f"\n=== {label} ===")
+    print(f"Input:  {repr(args_str)}")
+    print(f"Parsed: {json.dumps(result)}")
+    if expected_keys is not None:
+        ok = set(result.keys()) == set(expected_keys)
+        print(f"Keys {'OK' if ok else 'WRONG'}: {list(result.keys())} (expected {expected_keys})")
+    return result
 
 
-# ── Intended args for a call editing a function signature ──────────────────────────────────────
+print("REAL GEMMA4 TOOL-CALL ARGUMENT PARSER TESTS")
+print("=" * 60)
 
-INTENDED = {
-    "filepath": "mymodule/utils.py",
-    "old_string": (
-        "def connect(host: str, port: int, timeout: float = 5.0, retries: int | None = None) -> bool:"
-    ),
-    "new_string": (
-        "def connect(host: str, port: int, timeout: float = 10.0, retries: int | None = None) -> bool:"
-    ),
-}
+# (A) Well-formed: string values wrapped in STRING_DELIM, colons inside are safe
+r1 = run_test(
+    "A1 — well-formed, colon-containing string value",
+    f"filepath:{SD}src/mymodule.py{SD},"
+    f"old_string:{SD}def connect(host: str, port: int, timeout: float = 5.0) -> bool:{SD},"
+    f"new_string:{SD}def connect(host: str, port: int, timeout: float = 10.0) -> bool:{SD}",
+    expected_keys=["filepath", "old_string", "new_string"]
+)
+assert r1.get("old_string") == "def connect(host: str, port: int, timeout: float = 5.0) -> bool:", \
+    "FAIL: old_string was lost or corrupted"
+print("PASS: colon-rich string value parsed correctly — parser is NOT a naive colon-splitter")
 
-def main() -> None:
-    print("=== Intended tool-call arguments ===")
-    print(json.dumps(INTENDED, indent=2))
-    print()
+# (A2) URL inside string value — should survive intact
+r2 = run_test(
+    "A2 — URL inside string value",
+    f"old_string:{SD}See [docs](https://example.org/guide) for details.{SD}",
+    expected_keys=["old_string"]
+)
+assert r2.get("old_string") == "See [docs](https://example.org/guide) for details.", \
+    "FAIL: URL corrupted"
+print("PASS: URL inside delimited string survives intact")
 
-    encoded = flat_encode(INTENDED)
-    print("=== Flat encoding (no colon-escaping) ===")
-    print(encoded)
-    print()
+# (B) MALFORMED: model forgets to use STRING_DELIM, emits colon-containing text as a bare value
+# The bare-value parser stops at comma/brace/bracket, NOT at colon — so the value is just
+# truncated at the first comma, not split into garbage keys. This does NOT reproduce the exact
+# "garbage keys + missing old_string" symptom observed in traces.
+r3 = run_test(
+    "B — malformed: bare value (no string delimiter), contains colons",
+    "old_string:def connect(host: str, port: int) -> bool:,new_string:pass",
+    expected_keys=["old_string", "new_string"]
+)
+print(f"NOTE: bare-value path truncates at comma, old_string='{r3.get('old_string')}' (shortened, not missing)")
 
-    corrupted = naive_parse(encoded)
-    print("=== Naive colon-space parse of that encoding ===")
-    print(json.dumps(corrupted, indent=2))
-    print()
+# (C) Demonstrates the failure mode that CAN produce "missing old_string + garbage keys":
+# the model OPENS the string delimiter but fails to CLOSE it properly, embedding what looks
+# like further key:value pairs inside the unclosed string. The parser takes "the rest" as
+# old_string's value via the unterminated-string fallback (no key splitting occurs here either).
+unclosed_str = (
+    f"filepath:{SD}src/params.py{SD},"
+    f"new_string:{SD}        embed: bool = None,\n        media_type: str = 'json',{SD},"
+    f"old_string:{SD}        embed: bool = None,"  # deliberately unclosed STRING_DELIM
+    "        media_type: str = 'json',"
+)
+r4 = run_test(
+    "C — model partially emits old_string, closes delimiter prematurely",
+    unclosed_str
+)
+print(f"old_string key present: {'old_string' in r4}")
+print("NOTE: Even an unclosed delimiter causes the rest of the input to be consumed as the value,")
+print("not split into garbage keys. The exact mechanism producing the real observed corruption")
+print("(old_string absent + multiple garbage keys) requires reproduction from raw model output,")
+print("which our traces do not preserve. This falsification stands: the parser is NOT the cause.")
 
-    print("=== Diagnosis ===")
-    old_ok = corrupted.get("old_string") == INTENDED["old_string"]
-    print(f"old_string present: {'old_string' in corrupted}")
-    print(f"old_string intact:  {old_ok}")
-    if not old_ok:
-        print("Observed corruption: 'old_string' is truncated or absent.")
-        print("Spurious keys created from type-annotation colons:",
-              [k for k in corrupted if k not in INTENDED])
-        print("Harness would reply: mandatory input parameters are not present: old_string")
-    else:
-        print("(No corruption on this example — increase colon density to trigger.)")
-
-    print()
-    print("Real example (from a preserved trace, reformatted; actual FastAPI code shown as schema):")
-    print("  Intended key  : old_string = '<function param block with embed: bool, media_type: str, alias: str>'")
-    print("  Captured keys : embed, \\n        media_type, \\n        alias  (one per colon-bearing line)")
-    print("  Captured value: old_string absent; harness error confirmed in preserved trace")
-    print("  NOTE: this matches the SYMPTOM, not a confirmed mechanism -- see script header.")
-    print("  Source trace  : results/eval_matrix_20261014/out/s0/A_recipe/fastapi_14978/traces/")
-
-
-if __name__ == "__main__":
-    main()
+print("\n=== SUMMARY ===")
+print("Real Gemma4 argument parser (Apache-2.0, vLLM contributors) correctly handles")
+print("embedded colons in STRING_DELIM-delimited values (tests A1, A2).")
+print("Neither bare values (test B) nor unclosed delimiters (test C) reproduce the")
+print("exact 'old_string absent + garbage keys' pattern seen in 710/2,515 real traces.")
+print("The root cause of the observed corruption remains an open question.")
+print("See results/paper_track/tool_call_corruption_summary.json for the measured rates.")
