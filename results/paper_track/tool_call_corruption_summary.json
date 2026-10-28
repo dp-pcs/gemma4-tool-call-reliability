@@ -1,0 +1,23 @@
+{
+  "source_dirs": [
+    "results/eval_matrix_20261014/out/s0",
+    "results/eval_matrix_20261015/out/s0",
+    "results/eval_matrix_20261015/out/s1",
+    "results/eval_matrix_20261015/out/s2"
+  ],
+  "methodology": "Per-call classification of edit_file arguments by presence/absence of old_string and new_string keys after JSON parsing of the harness-recorded tool_calls[].arguments field; back-to-back duplicate detection compares consecutive edit_file/write_file calls (same function name + identical parsed arguments) with no other tool call between them.",
+  "runs": 1140,
+  "edit_file_total": 2515,
+  "edit_file_ok_args_present": 1777,
+  "edit_file_missing_old_string_only": 710,
+  "edit_file_missing_old_string_only_pct": 28.2,
+  "edit_file_missing_both": 25,
+  "edit_file_missing_new_string_only": 3,
+  "edit_file_any_missing_required_arg": 738,
+  "edit_file_any_missing_required_arg_pct": 29.3,
+  "back_to_back_identical_edit_or_write_calls": 602,
+  "notes": [
+    "missing_old_string_only (new_string present, old_string absent) is the cleanest symptom of the edit_file argument-loss failure (see writeup Section 3): the call carries a replacement but the match target was lost. Mechanism is an open question (the naive colon-split parser hypothesis was falsified; see Section 3.2-3.3).",
+    "edit_file_any_missing_required_arg matches the broader 'malformed' definition used by scripts/eval_matrix/mechanism_check.py elsewhere in this project (any required argument absent, for any reason) -- do not conflate the two percentages when citing."
+  ]
+}
