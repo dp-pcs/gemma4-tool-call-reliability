@@ -83,12 +83,14 @@ In bash, the exit status of a pipeline is the exit status of its **last command*
 
 This is a scaffold-level bug in our own prompt, not a defect in pytest, bash, or the harness: we instructed the agent to run a command whose exit code it cannot trust. When pytest reports failing tests (exit code 1) or a collection error (exit code 2), the pipeline masks both as success. The agent, seeing no error exit code, may conclude its fix is working and proceed toward submission with a patch that fails the actual hidden tests. We flag it because the same mistake is easy to make in any agent scaffold that composes shell pipelines for verification, not because it is specific to this competition's infrastructure.
 
-### 4.3 The fix, and what remains unmeasured
+### 4.3 The fix and its measured effect
 
 ```
 timeout 150 python -m pytest tests/path.py -x -q -k keyword > /tmp/t.log 2>&1; ec=$?; tail -25 /tmp/t.log; echo "EXIT:$ec"
 ```
-Redirect to a file, capture `$?` immediately after pytest (before any subsequent command can overwrite it), then show the tail and print the saved exit code explicitly. The agent now sees `EXIT:1` when tests fail. We have implemented and committed this fix but have not yet completed a paired screen measuring its effect on task resolution rate; we report the mechanism and the fix's correctness, not yet a resolution-rate improvement.
+Redirect to a file, capture `$?` immediately after pytest (before any subsequent command can overwrite it), then show the tail and print the saved exit code explicitly. The agent now sees `EXIT:1` when tests fail.
+
+We measured the fix's effect in a paired screen: 38 development tasks × 3 samples = 114 runs per arm, prompt-identical except for the verification command. The corrected arm resolved 44/114 (38.6%) vs. 35/114 (30.7%) for the original — W11/L2/T101, net +9, sign-test p = 0.023. Timeouts decreased (12 vs. 15) and empty patches decreased (24 vs. 27), consistent with the agent now detecting failing tests and making a corrective edit rather than submitting wrong on the first attempt. This is a single paired measurement on one development task set; a confirmation screen on held-out tasks is the appropriate next step before relying on the exact magnitude.
 
 ---
 
