@@ -1,12 +1,12 @@
-# When Tool-Interfaces Lie: Two Silent Failures and Three Measurement Lessons from a Gemma 4 Coding Agent
+# When Tool-Interfaces Lie: Two Silent Failures and Three Lessons from a Gemma 4 Coding Agent
 
-**Subtitle:** We found two independent tool-interface bugs that report success when the agent has failed. We ruled out an attractive explanation for the first, and provide a complete executable fix for the second. Three infrastructure lessons follow.
+**Subtitle:** We found two independent tool-interface bugs that report success when the agent has failed. We ruled out an attractive explanation for the first, and document a measured fix for the second whose local gain did not transfer to the scorer. Three architecture and calibration lessons follow.
 
 ---
 
 ## Abstract
 
-Building a Gemma 4–based agent for the Kaggle Gemma 4 Developer Agent competition, we found two independent, silent tool-interface failures — failures that give the agent no actionable error signal and are invisible in aggregate resolution-rate metrics. The first: 710 of 2,515 `edit_file` calls (28.2%) arrived at the harness missing their `old_string` argument. We falsify the attractive "naive colon-splitter parser" explanation using the actual Apache-2.0 open-source vLLM Gemma 4 parser code (which uses explicit string delimiters, not colon parsing) plus a clean control group of 14,127 `run_command` calls (colon-dense, zero corruption). The root cause remains open. The second: the agent's verification step pipes pytest output through `tail`, and bash reports `tail`'s exit code — not pytest's — so **failing tests can look like passes** to the agent; 85 of the agent's pytest calls across 65 of 285 runs were affected. This is a prompt-level scaffold bug with a single-line fix; its effect on task resolution is not yet measured. We also report three independent calibration and methodology lessons from the same project.
+Building a Gemma 4–based agent for Kaggle's Gemma 4 Developer Agent competition, we found two independent, silent tool-interface failures — failures that give the agent no actionable error signal and are invisible in aggregate resolution-rate metrics. The first: 710 of 2,515 `edit_file` calls (28.2%) arrived at the harness missing their `old_string` argument. We falsify the attractive "naive colon-splitter parser" explanation using the actual Apache-2.0 open-source vLLM Gemma 4 parser code (which uses explicit string delimiters, not colon parsing) plus a clean control group of 14,127 `run_command` calls (colon-dense, zero corruption). The root cause remains open. The second: the agent's verification step pipes pytest output through `tail`, and bash reports `tail`'s exit code — not pytest's — so **failing tests can look like passes** to the agent; 85 of the agent's pytest calls across 65 of 285 runs were affected. This prompt-level scaffold bug improved local resolution by +9/114 (p = 0.023) when fixed, but did not improve scores on the public leaderboard (three draws: 9, 8, 8/58 versus 10, 10 for the uncorrected prompt). We also report three independent architecture and calibration lessons from the same project.
 
 ---
 
@@ -14,9 +14,9 @@ Building a Gemma 4–based agent for the Kaggle Gemma 4 Developer Agent competit
 
 Agentic coding systems depend on structured tool-calling interfaces both to act (edit files) and to verify (check whether tests pass). Failures in those interfaces can be silent: the agent receives no error, assumes success, submits a patch, and the downstream scorer sees the actual failure. From the outside, the run looks identical to a reasoning failure.
 
-This paper documents two such failures found while building an agent for the Google–Gemma 4 Developer Agent competition (Kaggle). Section 3 covers a measured, large-scale argument-loss failure whose mechanism we cannot fully explain despite a careful investigation that falsified one hypothesis with executable code. Section 4 covers an exit-code masking bug whose mechanism is precise and whose fix is a one-line command change.
+This paper documents two such failures found while building an agent for Kaggle's Gemma 4 Developer Agent competition. Section 3 covers a measured, large-scale argument-loss failure whose mechanism we cannot fully explain despite a careful investigation that falsified one hypothesis with executable code. Section 4 covers an exit-code masking bug whose mechanism is precise, whose fix is a one-line command change, and whose local improvement did not appear in public evaluations on unfamiliar repositories.
 
-Sections 5–7 report three further, independent lessons from the same project: benchmark-rig calibration is harder than matching one throughput number; shared-budget multi-agent frameworks can make concurrency actively harmful; and self-distillation fine-tuning can be systematically defeated by inference-latency cost under a wall-clock budget.
+Sections 5–7 report three further, independent lessons from the same project: benchmark-rig calibration is harder than matching one throughput number, and local paired screens on familiar repositories can mis-rank prompt changes; shared-budget multi-agent frameworks can make concurrency actively harmful; and self-distillation fine-tuning can be systematically defeated by inference-latency cost under a wall-clock budget.
 
 ---
 
@@ -24,7 +24,7 @@ Sections 5–7 report three further, independent lessons from the same project: 
 
 Agents use Gemma 4 31B IT (W4A16) via vLLM with the `gemma4` tool-call and reasoning parsers, built on Google's ADK via swegemma. Per-task budget: 28 tool calls and 4–8 minutes. Tools: `read_file`, `run_command`, `edit_file`, `write_file`, `submit_patch`.
 
-Two corpora: Sections 3–4's bug analysis covers 7 configurations × up to 3 samples × 95 development tasks = 1,140 runs, on a 4×A100 rig. Sections 5–7 use 38 tasks selected from the same 95-task development set, 3 samples each (114 runs per arm), on the same rig with concurrency adjusted to approximate the scorer's L4 decode rate. Neither corpus is the hidden scoring set; the competition publicly shows 58 of roughly 120 hidden tasks from repositories disjoint from the four public training ones.
+Two corpora: Sections 3–4's bug analysis covers 7 configurations × up to 3 samples × 95 development tasks = 1,140 runs, on a 4×A100 rig at N=5 concurrent tasks per GPU. Sections 5–7 use 38 of the same 95 development tasks, 3 samples each (114 runs per arm); Section 5 uses N=8 (decode-matched to the scorer's L4 rate); Section 6 uses N=1 (single-task concurrency for the ensemble test); Section 7 uses N=5 (pre-calibration, same as Section 3–4). The Section 4 pipefix screen ran at N=2 workers per GPU (8 total across 4 replicas). Neither corpus is the hidden scoring set; the competition publicly shows 58 of roughly 120 hidden tasks from repositories disjoint from the four public training ones.
 
 ---
 
@@ -41,9 +41,7 @@ Two corpora: Sections 3–4's bug analysis covers 7 configurations × up to 3 sa
 | Both absent | 25 | 1.0% |
 | `new_string` absent only | 3 | 0.1% |
 
-We also found 602 back-to-back identical `edit_file`/`write_file` calls — the agent retrying an already-rejected call unchanged. Per-arm, the `old_string`-loss rate spans 16.1%–41.8%; no single configuration knob explains the spread and we make no causal claim from it.
-
-Two preserved traces illustrate the shape: in `fastapi_14978`, a call targeting a multi-line Python parameter block arrived with `new_string` intact but ending in the literal fragment `` `,old_string: ``, with spurious top-level keys `embed`, `\n        media_type`, `\n        alias`. In `fastapi_14258`, a call targeting a docstring with a Markdown link produced garbage keys `) -> None` and `](https`.
+We also found 602 back-to-back identical `edit_file`/`write_file` calls — the agent retrying an already-rejected call unchanged. Per-arm, the loss rate spans 16.1%–41.8%, with no single configuration knob explaining the spread.
 
 ### 3.2 Falsifying the naive hypothesis
 
@@ -51,11 +49,7 @@ Our first hypothesis was a parser-level defect: something treating colon charact
 
 This is testable because the vLLM Gemma 4 tool-call parser is open-source (Apache-2.0, `vllm/tool_parsers/gemma4_tool_parser.py`). It uses a **custom wire format** in which string values are delimited by a reserved multi-character token sequence (`<|"|>...<|"|>`), not by colons. A correctly-emitted string value containing any number of colon characters should parse intact.
 
-We extracted the three pure parsing functions (`_parse_gemma4_args`, `_parse_gemma4_value`, `_parse_gemma4_array`) — which depend on nothing beyond Python stdlib — and ran them directly in `scripts/paper/repro_colon_split.py`:
-- A colon-rich Python function signature as a `STRING_DELIM`-delimited string value: **parsed correctly**, `old_string` intact.
-- A Markdown URL inside a delimited string: **parsed correctly**.
-- A bare (undelimited) colon-containing string: produces a truncated value and some spurious keys, but does **not** reproduce the "old_string absent" symptom observed in 710 real calls.
-- An unclosed delimiter: the parser consumes the rest of the input as the key's value; again, `old_string` remains present.
+We extracted the three pure parsing functions — which depend on nothing beyond Python stdlib — and ran them directly in `scripts/paper/repro_colon_split.py`: colon-rich delimited strings parsed correctly in all test cases.
 
 The control group independently confirms this: across all 14,127 `run_command` calls in the same corpus, 2,299 contained three or more colon characters (type hints, URLs, heredoc code) and **zero** showed any spurious or missing argument key. If the parser split on colons uniformly, `run_command` would fail at the same rate as `edit_file`. It does not.
 
@@ -81,34 +75,41 @@ In bash, the exit status of a pipeline is the exit status of its **last command*
 
 ### 4.2 The mechanism
 
-This is a scaffold-level bug in our own prompt, not a defect in pytest, bash, or the harness: we instructed the agent to run a command whose exit code it cannot trust. When pytest reports failing tests (exit code 1) or a collection error (exit code 2), the pipeline masks both as success. The agent, seeing no error exit code, may conclude its fix is working and proceed toward submission with a patch that fails the actual hidden tests. We flag it because the same mistake is easy to make in any agent scaffold that composes shell pipelines for verification, not because it is specific to this competition's infrastructure.
+This is a scaffold-level bug in our own prompt, not a defect in pytest, bash, or the harness: we instructed the agent to run a command whose exit code it cannot trust. When pytest reports failing tests (exit code 1) or a collection error (exit code 2), the pipeline masks both as success. The agent, seeing no error exit code, may conclude its fix is working and proceed toward submission with a patch that fails the actual hidden tests.
 
-### 4.3 The fix and its measured effect
+### 4.3 The fix and what the data show
 
 ```
 timeout 150 python -m pytest tests/path.py -x -q -k keyword > /tmp/t.log 2>&1; ec=$?; tail -25 /tmp/t.log; echo "EXIT:$ec"
 ```
 Redirect to a file, capture `$?` immediately after pytest (before any subsequent command can overwrite it), then show the tail and print the saved exit code explicitly. The agent now sees `EXIT:1` when tests fail.
 
-We measured the fix's effect in a paired screen: 38 development tasks × 3 samples = 114 runs per arm, prompt-identical except for the verification command. The corrected arm resolved 44/114 (38.6%) vs. 35/114 (30.7%) for the original — W11/L2/T101, net +9, sign-test p = 0.023. Timeouts decreased (12 vs. 15) and empty patches decreased (24 vs. 27), consistent with the agent now detecting failing tests and making a corrective edit rather than submitting wrong on the first attempt. This is a single paired measurement on one development task set; a confirmation screen on held-out tasks is the appropriate next step before relying on the exact magnitude.
+A paired screen on two familiar repositories (FastAPI, Rich) measured the fix's local effect: 38 development tasks × 3 samples = 114 runs per arm. The corrected arm resolved 44/114 (38.6%) vs. 35/114 (30.7%) for the original — W11/L2/T101, net +9, sign-test p = 0.023 (`results/pipefix_paired_20261029/gates_analysis.json`). Timeouts decreased (12 vs. 15) and empty patches decreased (24 vs. 27).
+
+On the public leaderboard, the gain did not transfer. Three submissions of the corrected prompt scored 9, 8, and 8 of the 58 public tasks (mean 8.3), versus 10 and 10 for the uncorrected prompt (the same two draws used for T1@8). The local screen predicted roughly +2 public tasks; the actual result is −1.7 (mean). The fix is still correct — a verification step should not report false passes — but its measured local benefit on two repositories the model has seen during training did not carry over to unfamiliar repositories in the hidden scoring set. The mechanism for the transfer failure is an open question (see Section 5 for the broader context of this pattern).
 
 ---
 
-## 5. Lesson A — Calibrating an Agent Benchmark Is Harder Than Matching One Throughput Number
+## 5. Lesson A — Familiar-Repository Screens Can Mis-Rank Prompt Changes
 
-At N=5 concurrent tasks per GPU (A100), our best arm (`T3_5m`) resolved 37/114 (32.5%), mean task duration 284 s. The competition scorer's hardware (4×L4) has a measured single-stream decode rate of 34.3 tok/s, roughly 79% of our local rate. Recalibrating to N=8 concurrent tasks — matching the throughput ratio — dropped the same arm to 28/114 (24.6%), mean 302 s, with 79/114 runs now hitting the 5-minute cap. An 8-percentage-point swing from changing one concurrency parameter, without changing the agent prompt.
+At N=5 concurrent tasks per GPU (A100), one arm (`T3_5m`) resolved 37/114 (32.5%), mean task duration 284 s. The competition scorer's hardware (4×L4) has a measured single-stream decode rate of 34.3 tok/s, roughly 79% of our local rate. Recalibrating to N=8 workers per GPU, where per-stream decode (33.6 tok/s) matches the scorer's 34.3 tok/s, dropped the same arm to 28/114 (24.6%), mean 302 s, with 79/114 runs now hitting the 5-minute cap. An 8-percentage-point swing from changing one concurrency parameter, without changing the agent prompt.
 
-One calibration caveat is worth noting: the `duration_seconds` field our matrix runner saves includes both the agent loop and the grading/verification step (Phase 2). A separate analysis of 1,140 runs found that grading adds roughly 25–30 s to a typical 300–450 s task (about 7–9%). Removing that overhead from our highest-concurrency arm's measured mean (444.8 s) leaves roughly 415 s of agent-only time per task; extrapolated across ~120 sequential hidden tasks, that is still approximately 13.8 hours — over the real 12-hour budget — yet the actual submission at this configuration completed successfully. We do not have a confirmed explanation for the remaining gap (candidates include prefill contention under local concurrency that a sequential scorer does not experience, or hidden tasks that are shorter on average than our 38-task local sample). We do not claim the local rig is calibrated to the scorer; the safer conclusion is that timeouts measured on the local rig likely overstate what the scorer would produce, in an amount we have not pinned down.
+One calibration caveat is worth noting: `duration_seconds` includes both the agent loop and the grading step. A separate analysis of 1,140 runs found that grading adds roughly 25–30 s to a typical task. Removing that overhead from T1@8's mean on the calibrated rig (444.8 s) leaves roughly 415 s of agent-only time per task; extrapolated across ~120 sequential hidden tasks, that is still approximately 13.8 hours — over the real 12-hour budget — yet the actual submission at this configuration completed successfully five times. We do not claim the rig is calibrated to the scorer: the decode-matched rig still runs slower end-to-end, possibly due to prefill contention at N=8 that a sequential scorer does not experience. Timeouts on the rig likely overstate what the scorer would produce.
 
-The practical lesson: agent benchmarks under a wall-clock budget are more sensitive to concurrency than to raw token throughput, because concurrency determines how many runs hit the timeout boundary rather than completing. Absolute resolution-rate estimates varied by several percentage points between rig settings. Relative rankings across arms proved more stable across both local settings and on the public leaderboard, suggesting relative comparisons are the more defensible signal from a local rig.
+The deeper finding comes from the leaderboard data. Each time a prompt configuration won the local paired screen, it scored lower than the unchanged baseline on the public leaderboard:
+- T3\_dynamic@8: net +7 locally (40 vs. 33/114), 0.13 vs. 0.17 on the LB
+- T3\_5m: net +4 locally (37 vs. 33/114), 0.10 vs. 0.17
+- t1\_pipefix: net +9 locally (44 vs. 35/114, p = 0.023), mean 8.3 vs. 10/58
+
+Each gap fits within single-draw noise, but the direction is consistent across all three. The likely explanation: our screens used two repositories (FastAPI, Rich) the model has memorized through pretraining, while the hidden tasks come from disjoint repositories. Local paired screens on familiar repositories are necessary but not sufficient for a prompt decision; a proxy built from unfamiliar repositories is the minimum for ranking changes with confidence.
 
 ---
 
 ## 6. Lesson B — A Multi-Agent Ensemble Can Be Disabled by One Runaway Sub-Agent
 
-We built a parallel best-of-N ensemble (three independent solvers feeding a selector stage that calls `submit_patch`) to explore whether sampling diversity helps. Each solver was prompt-budgeted to 7 tool calls; the selector to 3.
+We built a parallel best-of-N ensemble (three independent solvers feeding a selector stage that calls `submit_patch`) to explore whether sampling diversity helps. Each solver was prompt-budgeted to 7 tool calls; the selector to 3. The screen ran at N=1 (single-task concurrency) to avoid the confound of GPU contention.
 
-At corrected single-task concurrency, the ensemble resolved 2/114 (1.8%) versus 29/114 (25.4%) for the single-agent baseline — sign-test p ≈ 2×10⁻⁷. The cause was structural: ADK's `ParallelAgent` blocks until every sub-agent completes, and the harness enforces one session-wide budget (not per-sub-agent). In one inspected trace, one solver made ~20 tool calls against its 7-call prompt budget, running to 311 elapsed seconds while siblings finished around 120–125 s, exhausting time before the selector could run. Mean tool calls per run rose from 15.7 to 56.8; failures shifted almost entirely to timeout (70/114) and empty patch (32/114).
+At single-task concurrency, the ensemble resolved 2/114 (1.8%) versus 29/114 (25.4%) for the single-agent baseline (T3\_5m\_tc1536) — W1/L27, sign-test p ≈ 2.2×10⁻⁷ (`results/p3_screen_20261023/gates_analysis_p3_vs_tc1536.json`). The cause was structural: ADK's `ParallelAgent` blocks until every sub-agent completes, and the harness enforces one session-wide budget (not per-sub-agent). In one inspected trace, one solver made ~20 tool calls against its 7-call prompt budget, running to 311 elapsed seconds while siblings finished around 120–125 s, exhausting time before the selector could run. The `locate` stage also overran its stated 2-call limit (using 3–4 calls), reflecting the same absence of enforced stage budgets. Mean tool calls per run rose from 17.0 (baseline) to 56.8; the primary failure shift was in empty patches (1 → 32) and wrong patches (6 → 0): the selector that holds `submit_patch` rarely ran, so most runs either submitted nothing or were stale partial captures.
 
 A prompt-stated call limit is not an enforced limit. Multi-agent designs whose only commit path sits behind a stage that can be starved by a sibling need either framework-level per-sub-agent enforcement (unavailable here) or a non-blocking fallback path.
 
@@ -116,36 +117,34 @@ A prompt-stated call limit is not an enforced limit. Multi-agent designs whose o
 
 ## 7. Lesson C — Self-Distillation Fine-Tuning Can Be Defeated by Inference Latency
 
-We ran four LoRA self-distillation attempts on the agent's own resolved trajectories, each addressing a failure mode found in the prior attempt, against a pre-registered bar (promote if net wins ≥ +9; hold if ≤ −9, paired 38-task × 3-sample screen vs. untuned baseline):
+We ran four LoRA self-distillation attempts on the agent's own resolved trajectories, each addressing a failure mode found in the prior attempt, against a pre-registered bar (promote if net wins ≥ +9; hold if ≤ −9, `results/harvest_20261015/GATES.md`), paired 38-task × 3-sample screen vs. untuned baseline:
 
 | Variant | Key change | Result | Net (sign-test p) |
 |---|---|---|---|
 | v1 | Full thinking supervised, 90 examples, lr 1e-4 | 29/114 vs. 39/114 | −10 (p = 0.041) |
-| v2 | Thinking masked from loss | 19/114 vs. 41/114 | −22 (p ≈ 0) |
+| v2 | Thinking masked from loss | 19/114 vs. 41/114 | −22 (p < 10⁻⁵) |
 | v3 | Thinking supervised, truncated, lr 5e-5 | 31/114 vs. 35/114 | −4 (p = 0.52) |
 | v4 | Efficiency-filtered training data | 32/114 vs. 33/114 | −1 (p = 1.0) |
 
-None cleared the bar. The v1 result (net −10, p = 0.041) is based on 38 development tasks with 3 samples each; under a task-block permutation sign-flip, the same data yield p = 0.074 — still directional but not independently significant, so this result should be treated as suggestive rather than definitive. The trend across all four variants, however, is consistent: higher per-call token counts (v1: 305→370 tokens/call, 14.8→17.6 s/call) and more frequent timeout-without-patch runs (v1: empty-at-budget 38→55) appear across variants, and the most latency-affected runs show systematic losses.
+None cleared the bar. The v1 result (net −10, p = 0.041, `results/harvest_20261015/GATES.md`) is based on 38 development tasks with 3 samples each; under a task-block permutation sign-flip, the same data yield p = 0.074 — not independently significant, so this result should be treated as suggestive. The trend across all four variants is consistent: v1 showed higher per-call token counts (305→370 tokens/call), longer per-call duration (14.8→17.6 s/call), and more empty-at-budget runs (38→55), all from `results/harvest_20261015/GATES.md`.
 
-A separate confirming signal: v3's packaged submission (Kaggle ref 57412209) failed outright with "exceeded the allowed runtime" — a latency failure under the same 8-minute budget the untuned baseline consistently passes. An adapter that improves per-call formatting can still lose a time-budgeted competition if it increases per-call latency. We observe this cost; we identify latency as the most plausible proximate cause; we do not claim to have isolated it from other potential explanations.
+A separate confirming signal: v3's packaged submission (Kaggle ref 57412209) failed outright with "exceeded the allowed runtime" — a latency failure under the same 8-minute budget the untuned baseline consistently passes. An adapter that improves per-call formatting can still lose a time-budgeted competition if it increases per-call latency. We observe this cost; latency is the most plausible proximate cause; we do not claim to have isolated it from other potential explanations.
 
 ---
 
-## 8. Reproducibility and Competition-Rule Constraints
+## 8. Reproducibility
 
-Our development work lives in a private repository (`dp-pcs/gemma4-swe-agent`) that currently tracks some organizer-provided files (task list, sample submission bundle) — these are subject to competition rule 2.4.b, which restricts redistributing Competition Data to non-participants, and should be cleaned up before that repository is shared publicly.
-
-The paper's supporting code — detection scripts, aggregate evidence, the parser-testing repro script — is released separately in a public repository (`dp-pcs/gemma4-tool-call-reliability`) that contains no organizer-provided data. A companion Kaggle notebook (`results/paper_track/kaggle_notebook.py`) reproduces the key evidence cells and links to that repository.
+The paper's supporting code — detection scripts, aggregate evidence, the parser-testing repro script — is released in a public repository (`dp-pcs/gemma4-tool-call-reliability`) that contains no organizer-provided data. A companion Kaggle notebook reproduces the key evidence cells and links to that repository, published publicly on Kaggle and listed in this submission's Project Links field.
 
 ---
 
 ## 9. Related Work
 
-**SWE-bench.** Jimenez et al. (2024) established GitHub-issue resolution as an agent benchmark. Our paper is a case study in how much measured variance in such benchmarks can come from harness-level bugs rather than model capability.
+**SWE-bench.** Jimenez et al. (2024) established GitHub-issue resolution as an agent benchmark. Our paper is a case study in how much measured variance in such benchmarks can come from harness-level bugs and familiar-repository bias rather than model capability.
 
-**Tool-calling reliability.** Gorilla (Patil et al., 2023) identified inaccurate argument generation as a core obstacle. The Berkeley Function-Calling Leaderboard systematically tracks call-level accuracy. Noorain et al. (2026) find that per-call error rates compound across multi-step tasks and are substantially higher for smaller or weaker models; our 28.2% argument-loss rate on a 31B model is consistent with that size-dependent pattern on a single model.
+**Tool-calling reliability.** Gorilla (Patil et al., 2023) identified inaccurate argument generation as a core obstacle. The Berkeley Function-Calling Leaderboard systematically tracks call-level accuracy. Noorain et al. (2026) find that per-call error rates compound across multi-step tasks; our 28.2% argument-loss rate on a 31B model shows that argument-level failure is not limited to small models.
 
-**Agent benchmarking methodology.** Zhang et al. (2026) document scaffold-attribution and shape-scoring confounds. Our Section 5 finding (concurrency-driven timeout amplification) is a distinct mechanism but shares the implication that absolute benchmark numbers can diverge from deployment performance under apparently small methodological choices.
+**Agent benchmarking methodology.** Zhang et al. (2026) document scaffold-attribution and shape-scoring confounds. Our Section 5 finding — familiar-repository screens systematically mis-ranking prompt changes relative to the hidden scorer — is a distinct mechanism but shares the broader implication that apparent local improvements may not transfer.
 
 **Multi-agent orchestration.** The session-wide-budget starvation we document in Section 6, to our knowledge, has not been previously reported in a live competition setting; we flag it as a concrete design constraint for ADK-based submissions.
 
@@ -153,13 +152,13 @@ The paper's supporting code — detection scripts, aggregate evidence, the parse
 
 ## 10. Limitations
 
-All findings are from one model family (Gemma 4 31B), one harness (swegemma/ADK), and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open; reproduction from raw token output would be needed to resolve it. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. Section 5 calibration findings are from two rig settings and a small number of public leaderboard data points (±2.5-task SD per draw). Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline; other fine-tuning approaches may not encounter the same latency trade-off.
+All findings are from one model family (Gemma 4 31B), one harness (swegemma/ADK), and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. Repeat submissions of the identical bundle on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a larger ±2.5-task figure cited elsewhere in our internal records is the task-sampling variance for the private set, not the repeat-draw variance on this fixed public set, and should not be used to judge these differences. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
 
 ---
 
 ## 11. Conclusion
 
-We identified and documented two independent tool-interface bugs — one whose mechanism we falsified but could not fully resolve, and one whose mechanism is precise and whose fix is a single line. Three calibration and architecture findings round out the paper. The consistent theme: in fixed-budget agent competitions, infrastructure defects and measurement methodology choices produce effects at least as large as the agent improvements typically under study.
+We identified and documented two independent tool-interface bugs — one whose mechanism we falsified but could not fully resolve, and one whose fix improved local resolution but did not transfer to unfamiliar scoring repositories. Three further findings show that in fixed-budget agent competitions, infrastructure defects, familiar-repository bias in local evaluation, shared-budget multi-agent starvation, and inference-latency cost from fine-tuning each produce effects at least as large as the agent improvements typically under study.
 
 Code, evidence, and the executable parser tests are at https://github.com/dp-pcs/gemma4-tool-call-reliability.
 
