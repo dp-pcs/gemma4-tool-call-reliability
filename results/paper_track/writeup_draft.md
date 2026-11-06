@@ -24,7 +24,7 @@ Sections 5–7 report three further, independent lessons from the same project: 
 
 Agents use Gemma 4 31B IT (W4A16) via vLLM with the `gemma4` tool-call and reasoning parsers, built on Google's ADK via swegemma. Per-task budget: 28 tool calls and 4–8 minutes. Tools: `read_file`, `run_command`, `edit_file`, `write_file`, `submit_patch`.
 
-Two corpora: Sections 3–4's bug analysis covers 7 configurations × up to 3 samples × 95 development tasks = 1,140 runs, on a 4×A100 rig at N=5 concurrent tasks per GPU. Sections 5–7 use 38 of the same 95 development tasks, 3 samples each (114 runs per arm); Section 5 uses N=8 (decode-matched to the scorer's L4 rate); Section 6 uses N=1 (single-task concurrency for the ensemble test); Section 7 uses N=5 (pre-calibration, same as Section 3–4). The Section 4 pipefix screen ran at N=2 workers per GPU (8 total across 4 replicas). Neither corpus is the hidden scoring set; the competition publicly shows 58 of roughly 120 hidden tasks from repositories disjoint from the four public training ones.
+Two corpora: Sections 3–4's bug analysis covers 7 configurations × up to 3 samples × 95 development tasks = 1,140 runs, on a 4×A100 rig at N=5 concurrent tasks per GPU. Sections 5–7 use 38 of the same 95 development tasks, 3 samples each (114 runs per arm); Section 5 compares N=5 with N=8 (decode-matched to the scorer's L4 rate) and its leaderboard comparisons use screens run at N=5 and N=2; Section 6 uses N=1 (single-task concurrency for the ensemble test); Section 7 uses N=5 (pre-calibration). The Section 4 pipefix screen ran at N=2 workers per GPU (8 total across 4 replicas). Neither corpus is the hidden scoring set; the competition publicly shows 58 of roughly 120 hidden tasks from repositories disjoint from the four public training ones.
 
 ---
 
@@ -49,17 +49,17 @@ Our first hypothesis was a parser-level defect: something treating colon charact
 
 This is testable because the vLLM Gemma 4 tool-call parser is open-source (Apache-2.0, `vllm/tool_parsers/gemma4_tool_parser.py`). It uses a **custom wire format** in which string values are delimited by a reserved multi-character token sequence (`<|"|>...<|"|>`), not by colons. A correctly-emitted string value containing any number of colon characters should parse intact.
 
-We extracted the three pure parsing functions — which depend on nothing beyond Python stdlib — and ran them directly in `scripts/paper/repro_colon_split.py`: colon-rich delimited strings parsed correctly in all test cases.
+We extracted the three pure parsing functions — which depend on nothing beyond Python stdlib — and ran them directly in `scripts/paper/repro_colon_split.py`: colon-rich delimited strings parsed correctly in all test cases. Malformed inputs (bare or unclosed delimiters) truncate values or add spurious keys but do not produce `old_string`-absent results, so even a generation-side formatting error does not explain the observed symptom through a simple parser-interaction path.
 
 The control group independently confirms this: across all 14,127 `run_command` calls in the same corpus, 2,299 contained three or more colon characters (type hints, URLs, heredoc code) and **zero** showed any spurious or missing argument key. If the parser split on colons uniformly, `run_command` would fail at the same rate as `edit_file`. It does not.
 
 ### 3.3 What the evidence says and does not say
 
-The parser is not the cause. The `old_string`-absent symptom arises from something earlier in the pipeline — either a model-generation failure to correctly emit the `STRING_DELIM` closing token after a long, verbatim, character-exact source-copy, or a serialization step specific to `edit_file`'s argument schema that does not affect `run_command`. We have not reproduced the exact corruption mechanism from first principles: our traces preserve only the post-parse argument dicts, not the raw model token output. We state this as an open, falsifiable question; the falsification of the colon-splitter hypothesis stands independently.
+The parser is not the cause. The `old_string`-absent symptom arises from something earlier in the pipeline — either a model-generation failure to correctly close the `STRING_DELIM` token after a long, verbatim source-copy, or a serialization step specific to `edit_file`'s schema that does not affect `run_command`. Our traces preserve only post-parse argument dicts, not raw model output, so we cannot reproduce the exact mechanism; we state it as an open, falsifiable question. The falsification of the colon-splitter hypothesis stands independently.
 
 ### 3.4 Mitigation and a note on the denominator
 
-We routed most edits through `run_command` with a Python heredoc, entirely avoiding `edit_file` for any multi-line or colon-containing match text. In the `T1_toolfix` arm, the prompt explicitly reserves `edit_file` for short, colon-free targets; this policy produced only 63 `edit_file` calls across 41 of 285 runs. Of those 63 calls, 3 (4.8%) lost `old_string`. This denominator is a selected subset by construction — calls the policy judged safe to route through `edit_file` — not a random sample of all edits. The finding is that routing edits away from the `edit_file` interface avoids the failure class, not that `edit_file` became more reliable on the calls it did receive.
+We routed most edits through `run_command` with a Python heredoc, avoiding `edit_file` for any multi-line or colon-containing match text. In the `T1_toolfix` arm, this policy produced only 63 `edit_file` calls across 41 of 285 runs; of those, 3 (4.8%) lost `old_string`. This denominator is a selected subset by construction (short, colon-free targets), not a random sample. The finding is that routing edits away from the interface avoids the failure class, not that `edit_file` became more reliable on the calls it still received.
 
 ---
 
@@ -86,7 +86,7 @@ Redirect to a file, capture `$?` immediately after pytest (before any subsequent
 
 A paired screen on two familiar repositories (FastAPI, Rich) measured the fix's local effect: 38 development tasks × 3 samples = 114 runs per arm. The corrected arm resolved 44/114 (38.6%) vs. 35/114 (30.7%) for the original — W11/L2/T101, net +9, sign-test p = 0.023 (`results/pipefix_paired_20261029/gates_analysis.json`). Timeouts decreased (12 vs. 15) and empty patches decreased (24 vs. 27).
 
-On the public leaderboard, the gain did not transfer. Three submissions of the corrected prompt scored 9, 8, and 8 of the 58 public tasks (mean 8.3), versus 10 and 10 for the uncorrected prompt (the same two draws used for T1@8). The local screen predicted roughly +2 public tasks; the actual result is −1.7 (mean). The fix is still correct — a verification step should not report false passes — but its measured local benefit on two repositories the model has seen during training did not carry over to unfamiliar repositories in the hidden scoring set. The mechanism for the transfer failure is an open question (see Section 5 for the broader context of this pattern).
+On the public leaderboard, the gain did not transfer. Three submissions of the corrected prompt scored 9, 8, and 8 of the 58 public tasks (mean 8.3), versus 10 and 10 for the uncorrected prompt (the same two draws used for T1@8). The local screen predicted roughly +2 public tasks; the actual result is −1.7 (mean). The fix is still correct — a verification step should not report false passes — but its measured local benefit on two repositories the model has likely seen during pretraining did not carry over to unfamiliar repositories in the hidden scoring set. The mechanism for the transfer failure is an open question (see Section 5 for the broader context of this pattern).
 
 ---
 
@@ -101,7 +101,7 @@ The deeper finding comes from the leaderboard data. Each time a prompt configura
 - T3\_5m: net +4 locally (37 vs. 33/114), 0.10 vs. 0.17
 - t1\_pipefix: net +9 locally (44 vs. 35/114, p = 0.023), mean 8.3 vs. 10/58
 
-Each gap fits within single-draw noise, but the direction is consistent across all three. The likely explanation: our screens used two repositories (FastAPI, Rich) the model has memorized through pretraining, while the hidden tasks come from disjoint repositories. Local paired screens on familiar repositories are necessary but not sufficient for a prompt decision; a proxy built from unfamiliar repositories is the minimum for ranking changes with confidence.
+Each gap is small (2–4 tasks), but each is larger than the ≤1-task spread observed between repeat submissions of the identical bundle on the same fixed public set, and all three go the same way. The likely explanation: our screens used two repositories (FastAPI, Rich) the model has likely seen during pretraining, while the hidden tasks come from disjoint repositories. Local paired screens on familiar repositories are necessary but not sufficient for a prompt decision; a proxy built from unfamiliar repositories is the minimum for ranking changes with confidence.
 
 ---
 
@@ -126,15 +126,15 @@ We ran four LoRA self-distillation attempts on the agent's own resolved trajecto
 | v3 | Thinking supervised, truncated, lr 5e-5 | 31/114 vs. 35/114 | −4 (p = 0.52) |
 | v4 | Efficiency-filtered training data | 32/114 vs. 33/114 | −1 (p = 1.0) |
 
-None cleared the bar. The v1 result (net −10, p = 0.041, `results/harvest_20261015/GATES.md`) is based on 38 development tasks with 3 samples each; under a task-block permutation sign-flip, the same data yield p = 0.074 — not independently significant, so this result should be treated as suggestive. The trend across all four variants is consistent: v1 showed higher per-call token counts (305→370 tokens/call), longer per-call duration (14.8→17.6 s/call), and more empty-at-budget runs (38→55), all from `results/harvest_20261015/GATES.md`.
+None cleared the bar. The v1 result (net −10, p = 0.041, `results/harvest_20261015/GATES.md`) is based on 38 tasks × 3 samples; under a task-block permutation sign-flip, the same data yield p = 0.074 — not independently significant, so treat it as suggestive. v1 showed higher per-call token counts (305→370), longer per-call duration (14.8→17.6 s), and more empty-at-budget runs (38→55), all from the same source.
 
-A separate confirming signal: v3's packaged submission (Kaggle ref 57412209) failed outright with "exceeded the allowed runtime" — a latency failure under the same 8-minute budget the untuned baseline consistently passes. An adapter that improves per-call formatting can still lose a time-budgeted competition if it increases per-call latency. We observe this cost; latency is the most plausible proximate cause; we do not claim to have isolated it from other potential explanations.
+A confirming signal: v3's packaged submission (Kaggle ref 57412209) failed outright with "exceeded the allowed runtime" — a latency failure under the same budget the untuned baseline consistently passes. An adapter that improves per-call formatting can still lose a time-budgeted competition if it increases per-call latency. We observe this cost and treat latency as the most plausible cause, without claiming to have isolated it from other explanations.
 
 ---
 
 ## 8. Reproducibility
 
-The paper's supporting code — detection scripts, aggregate evidence, the parser-testing repro script — is released in a public repository (`dp-pcs/gemma4-tool-call-reliability`) that contains no organizer-provided data. A companion Kaggle notebook reproduces the key evidence cells and links to that repository, published publicly on Kaggle and listed in this submission's Project Links field.
+The paper's supporting code — detection scripts, aggregate evidence, the parser-testing repro script — is released in a public repository (`dp-pcs/gemma4-tool-call-reliability`) that contains no organizer-provided data. A companion Kaggle notebook (https://www.kaggle.com/code/latentgenius/gemma-4-agent-tool-interface-failures-evidence) reproduces the key evidence cells and links to that repository, listed in this submission's Project Links field.
 
 ---
 
@@ -152,7 +152,7 @@ The paper's supporting code — detection scripts, aggregate evidence, the parse
 
 ## 10. Limitations
 
-All findings are from one model family (Gemma 4 31B), one harness (swegemma/ADK), and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. Repeat submissions of the identical bundle on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a larger ±2.5-task figure cited elsewhere in our internal records is the task-sampling variance for the private set, not the repeat-draw variance on this fixed public set, and should not be used to judge these differences. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
+All findings are from one model family (Gemma 4 31B), one harness (swegemma/ADK), and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. Repeat submissions of the identical bundle on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a larger ±2.5-task figure is the binomial task-sampling standard deviation relevant to the private set (which draws a different sample of tasks each time), not the repeat-draw variance on the fixed public set. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
 
 ---
 

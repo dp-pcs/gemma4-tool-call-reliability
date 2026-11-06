@@ -1,25 +1,11 @@
-# =============================================================================
-# HOW TO USE AS A KAGGLE NOTEBOOK
-# =============================================================================
-# 1. Go to kaggle.com/code → "New Notebook" → "File" → "Import Notebook"
-# 2. Upload this file (kaggle_notebook.py).  Kaggle recognises "# %%" cells.
-# 3. Set the notebook to PUBLIC before saving (required for the Paper Track
-#    "Project Links" field).
-# 4. Run all cells; confirm output matches the printed evidence below.
-# 5. Copy the notebook URL into the Paper Track submission's Project Links.
-#
-# No GPU, no internet access, no competition data required.
-# Everything runs with Python stdlib (json, textwrap).
-# =============================================================================
-
 # %% [markdown]
-# # Supporting Evidence — "When Edits Vanish"
+# # Supporting Evidence — "When Tool-Interfaces Lie"
 #
-# **Gemma 4 Developer Agent Paper Track submission**
+# **Kaggle's Gemma 4 Developer Agent competition — Paper Track submission**
 #
 # This notebook provides two pieces of standalone, reproducible evidence for
-# the paper *"When Edits Vanish: An Unexplained Argument-Loss Failure and
-# Three Measurement Lessons from a Gemma 4 Coding Agent"*:
+# the paper *"When Tool-Interfaces Lie: Two Silent Failures and Three Lessons
+# from a Gemma 4 Coding Agent"*:
 #
 # 1. **Aggregate corruption counts** from 1,140 preserved evaluation runs —
 #    the headline numbers cited in Section 3 of the paper.
@@ -204,9 +190,9 @@ print(textwrap.dedent("""\
 # ## Citation and Links
 #
 # **Paper:**
-# > "When Edits Vanish: An Unexplained Argument-Loss Failure and Three
-# > Measurement Lessons from a Gemma 4 Coding Agent."
-# > Submitted to the Google – Gemma 4 Developer Agent Paper Track (Kaggle),
+# > "When Tool-Interfaces Lie: Two Silent Failures and Three Lessons
+# > from a Gemma 4 Coding Agent."
+# > Submitted to Kaggle's Gemma 4 Developer Agent Paper Track,
 # > November 2026.
 #
 # **Companion repository** (aggregation scripts, evidence JSON, full paper text):
