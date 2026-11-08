@@ -12,8 +12,8 @@
 #   (B) When the model emits a BARE (undelimited) string containing colons, the real parser's
 #       bare-value path reads until the next comma/brace/bracket -- NOT at a colon -- so colons
 #       alone still do not produce missing keys. However, a model that forgets to close the
-#       STRING_DELIM token partway through a long verbatim copy CAN produce the observed
-#       garbage-key symptom; this script demonstrates that failure mode.
+#       STRING_DELIM token produces a different malformed value in the fixture below.
+#       These fixtures do not reproduce the observed absent-old_string symptom.
 #
 # Aggregate evidence: results/paper_track/tool_call_corruption_summary.json
 # Per-run detection: scripts/eval_matrix/mechanism_check.py
@@ -209,7 +209,7 @@ r3 = run_test(
 )
 print(f"NOTE: bare-value path truncates at comma, old_string='{r3.get('old_string')}' (shortened, not missing)")
 
-# (C) Demonstrates the failure mode that CAN produce "missing old_string + garbage keys":
+# (C) Tests an unclosed delimiter; old_string remains present in this fixture:
 # the model OPENS the string delimiter but fails to CLOSE it properly, embedding what looks
 # like further key:value pairs inside the unclosed string. The parser takes "the rest" as
 # old_string's value via the unterminated-string fallback (no key splitting occurs here either).
@@ -220,14 +220,14 @@ unclosed_str = (
     "        media_type: str = 'json',"
 )
 r4 = run_test(
-    "C — model partially emits old_string, closes delimiter prematurely",
+    "C — model opens old_string delimiter but never closes it",
     unclosed_str
 )
 print(f"old_string key present: {'old_string' in r4}")
 print("NOTE: Even an unclosed delimiter causes the rest of the input to be consumed as the value,")
 print("not split into garbage keys. The exact mechanism producing the real observed corruption")
 print("(old_string absent + multiple garbage keys) requires reproduction from raw model output,")
-print("which our traces do not preserve. This falsification stands: the parser is NOT the cause.")
+print("which our traces do not preserve. These controls reject universal colon splitting, not every parser interaction.")
 
 print("\n=== SUMMARY ===")
 print("Real Gemma4 argument parser (Apache-2.0, vLLM contributors) correctly handles")
