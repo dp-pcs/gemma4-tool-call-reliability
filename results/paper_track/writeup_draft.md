@@ -146,7 +146,7 @@ The paper's supporting code — detection scripts, aggregate evidence, the parse
 
 **Agent benchmarking methodology.** Zhang et al. (2026) document scaffold-attribution and shape-scoring confounds. Our three observed local/public rank reversals do not establish a distinct causal mechanism, but reinforce the need to confirm apparent local improvements.
 
-**Multi-agent orchestration.** The session-wide-budget starvation we document in Section 6, is a concrete design constraint for this ADK-based submission architecture.
+**Multi-agent orchestration.** The session-wide-budget starvation we document in Section 6 is a concrete design constraint for this ADK-based submission architecture.
 
 ---
 
@@ -154,7 +154,7 @@ The paper's supporting code — detection scripts, aggregate evidence, the parse
 
 Later eight-task development pilots also rejected extending T1 from eight to nine minutes (2/8 versus 3/8; the only win finished within eight minutes) and adding final-edit verification to E4B (0/8 versus 0/8). These small pilots establish neither equivalence nor a score forecast.
 
-All findings are from one model family (Gemma 4 31B), one harness (swegemma/ADK), and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. For T1 and pipefix, repeat submissions on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a binomial task-sampling calculation addresses hypothetical draws of tasks, not repeat-run variance or a measured private-set uncertainty. We have not established that the private set changes between runs. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
+The principal analyses use Gemma 4 31B; the later pilot also covers E4B. All use swegemma/ADK and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. For T1 and pipefix, repeat submissions on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a binomial task-sampling calculation addresses hypothetical draws of tasks, not repeat-run variance or a measured private-set uncertainty. We have not established that the private set changes between runs. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
 
 ---
 
