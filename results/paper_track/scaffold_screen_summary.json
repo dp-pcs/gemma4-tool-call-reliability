@@ -1,0 +1,46 @@
+{
+  "author_model": "OpenAI GPT-6 (Codex)",
+  "description": "Frozen E4B scaffold investment screen; aggregate-only release.",
+  "tasks": 38,
+  "repeats": 1,
+  "jobs": 76,
+  "model": "gemma-4-e4b-it-qat-w4a16-ct",
+  "runtime": "single NVIDIA L4; four workers; text-only; vLLM 0.19.1; 32,768-token context",
+  "resolved": {
+    "baseline": 6,
+    "candidate": 3
+  },
+  "paired": {
+    "wins": 0,
+    "losses": 3,
+    "ties": 35,
+    "net": -3,
+    "two_sided_sign_p": 0.25
+  },
+  "budgets": {
+    "baseline": {
+      "command_seconds": 240,
+      "tool_calls": 28,
+      "agent_minutes": 8,
+      "turns": 80
+    },
+    "candidate": {
+      "command_seconds": 150,
+      "tool_calls": 50,
+      "agent_minutes": 6,
+      "turns": 80
+    }
+  },
+  "gate": {
+    "required_net": 3,
+    "passed": false,
+    "repeat2_run": false,
+    "transfer_run": false
+  },
+  "limitations": [
+    "One sample per familiar development task.",
+    "Complete recipes differ in prompt, tools and budgets; no isolated scaffold-effect claim.",
+    "Local runtime is not scorer parity; no public-score estimate."
+  ],
+  "source_manifest_sha256": "da64cf1b9f4af993aa8b3d0a251b7e406c0fb9dc6466ff79c2800a76ce966464"
+}

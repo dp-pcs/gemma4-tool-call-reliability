@@ -18,7 +18,6 @@ print(json.dumps(SUMMARY, indent=2))
 assert 1777 + 710 + 25 + 3 == 2515
 print("Missing old_string only:", round(710 / 2515 * 100, 2), "%")
 
-
 # ## 2. Real-parser controls
 #
 # Well-formed colon-rich strings survive. The bare-value and unclosed-delimiter fixtures do not reproduce an absent `old_string`; these checks reject universal colon splitting, not every generation/parser interaction.
@@ -262,7 +261,6 @@ print("exact 'old_string absent + garbage keys' pattern seen in 710/2,515 real t
 print("The root cause of the observed corruption remains an open question.")
 print("See results/paper_track/tool_call_corruption_summary.json for the measured rates.")
 
-
 # ## 3. Keep termination and grading separate
 #
 # A resolved patch remains resolved even after an agent timeout. No explicit termination marker means unknown, not normal completion. Last-trace timing is not a measured agent/verification boundary.
@@ -272,7 +270,6 @@ t = MEASUREMENT["totals"]
 assert sum(t["termination_counts"].values()) == 1140
 assert t["resolved"] == 441 and t["timeout_resolved"] == 29
 print(json.dumps(t, indent=2))
-
 
 # ## 4. Pipefix: task-block uncertainty and public outcomes
 #
@@ -287,3 +284,15 @@ block_p = sum(x >= observed for x in permutations) / len(permutations)
 run_p = 2 * sum(math.comb(13,i) for i in range(3)) / 2**13
 assert block_p == .125 and run_p == .0224609375
 print({'task_block_p':block_p,'run_level_p':run_p,'local_resolved':[35,44],'public_T1':[10,10],'public_pipefix':[9,8,8]})
+
+# ## 5. Later E4B scaffold screen: failed investment gate
+#
+# One frozen local repeat on 38 development tasks produced candidate 3/38 versus baseline 6/38. Zero paired wins, three losses (two-sided p=.25). Candidate/baseline time budgets were 6/8 minutes, call limits 50/28. This comparison does not isolate a scaffold effect. The net>=+3 gate failed, so no repeat 2 or transfer stage ran. Only aggregate arithmetic is checked here; no evaluation data or traces are included.
+
+SCAFFOLD = {'author_model': 'OpenAI GPT-6 (Codex)', 'description': 'Frozen E4B scaffold investment screen; aggregate-only release.', 'tasks': 38, 'repeats': 1, 'jobs': 76, 'model': 'gemma-4-e4b-it-qat-w4a16-ct', 'runtime': 'single NVIDIA L4; four workers; text-only; vLLM 0.19.1; 32,768-token context', 'resolved': {'baseline': 6, 'candidate': 3}, 'paired': {'wins': 0, 'losses': 3, 'ties': 35, 'net': -3, 'two_sided_sign_p': 0.25}, 'budgets': {'baseline': {'command_seconds': 240, 'tool_calls': 28, 'agent_minutes': 8, 'turns': 80}, 'candidate': {'command_seconds': 150, 'tool_calls': 50, 'agent_minutes': 6, 'turns': 80}}, 'gate': {'required_net': 3, 'passed': False, 'repeat2_run': False, 'transfer_run': False}, 'limitations': ['One sample per familiar development task.', 'Complete recipes differ in prompt, tools and budgets; no isolated scaffold-effect claim.', 'Local runtime is not scorer parity; no public-score estimate.'], 'source_manifest_sha256': 'da64cf1b9f4af993aa8b3d0a251b7e406c0fb9dc6466ff79c2800a76ce966464'}
+assert SCAFFOLD["jobs"] == 2*SCAFFOLD["tasks"]
+assert sum(SCAFFOLD["paired"][k] for k in ["wins","losses","ties"]) == SCAFFOLD["tasks"]
+assert SCAFFOLD["resolved"]["candidate"]-SCAFFOLD["resolved"]["baseline"] == -3
+assert 2/2**3 == SCAFFOLD["paired"]["two_sided_sign_p"] == .25
+assert not SCAFFOLD["gate"]["passed"]
+print(json.dumps(SCAFFOLD,indent=2))
