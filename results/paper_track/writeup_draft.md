@@ -6,7 +6,7 @@
 
 ## Abstract
 
-Building a Gemma 4–based agent for Kaggle's Gemma 4 Developer Agent competition, we found two tool-interface failure classes that aggregate resolution rates alone do not explain. The first: 710 of 2,515 `edit_file` calls (28.2%) arrived at the harness missing their `old_string` argument. We falsify the attractive "naive colon-splitter parser" explanation using the actual Apache-2.0 open-source vLLM Gemma 4 parser code (which uses explicit string delimiters, not colon parsing) plus a clean control group of 14,127 `run_command` calls (colon-dense, zero corruption). The root cause remains open. The second: the agent's verification step pipes pytest output through `tail`, and bash reports `tail`'s exit code — not pytest's — so **failing tests can look like passes** to the agent; 85 of the agent's pytest calls across 65 of 285 runs were affected. The corrected prompt scored +9/114 locally (run-level p = 0.022; task-block p = 0.125), but did not improve scores on the public leaderboard (three draws: 9, 8, 8/58 versus 10, 10 for the uncorrected prompt). We also report three independent architecture and calibration lessons from the same project.
+Building a Gemma 4–based agent for Kaggle's Gemma 4 Developer Agent competition, we found two tool-interface failure classes that aggregate resolution rates alone do not explain. The first: 710 of 2,515 `edit_file` calls (28.2%) arrived at the harness missing their `old_string` argument. We falsify the attractive "naive colon-splitter parser" explanation using the actual Apache-2.0 open-source vLLM Gemma 4 parser code (which uses explicit string delimiters, not colon parsing) plus 14,127 `run_command` controls with no unexpected or missing argument keys. The root cause remains open. The second: the agent's verification step pipes pytest output through `tail`, and bash reports `tail`'s exit code — not pytest's — so **failing tests can look like passes** to the agent; 85 of the agent's pytest calls across 65 of 285 runs were affected. The corrected prompt scored +9/114 locally (run-level p = 0.022; task-block p = 0.125), but did not improve scores on the public leaderboard (three draws: 9, 8, 8/58 versus 10, 10 for the uncorrected prompt). We also report three independent architecture and calibration lessons from the same project.
 
 ---
 
@@ -14,15 +14,13 @@ Building a Gemma 4–based agent for Kaggle's Gemma 4 Developer Agent competitio
 
 Agentic coding systems depend on structured tool-calling interfaces both to act (edit files) and to verify (check whether tests pass). These interfaces fail in different ways: missing edit arguments trigger explicit tool errors, while shell pipelines can return a misleading success status. Aggregate resolution scores alone do not reveal either failure mode or how the agent responds.
 
-This paper documents these two failures found while building an agent for Kaggle's Gemma 4 Developer Agent competition. Section 3 covers a measured, large-scale argument-loss failure whose mechanism we cannot fully explain despite a careful investigation that falsified one hypothesis with executable code. Section 4 covers an exit-code masking bug whose mechanism is precise, whose fix is a one-line command change, and whose local improvement did not appear in public evaluations on unfamiliar repositories.
-
-Sections 5–7 report three further, independent lessons from the same project: benchmark-rig calibration is harder than matching one throughput number, and local paired screens on familiar repositories can mis-rank prompt changes; shared-budget multi-agent frameworks can make concurrency actively harmful; and self-distillation fine-tuning can be systematically defeated by inference-latency cost under a wall-clock budget.
+Sections 3–4 investigate missing edit arguments and masked test status. The former remains unexplained; fixing the latter did not improve public scores. Sections 5–7 examine runtime calibration, shared-budget orchestration and self-distillation latency. Together, these results show why benchmark interpretation requires tool outcomes, termination reasons and deployment conditions alongside resolution counts.
 
 ---
 
 ## 2. Setting
 
-Agents use Gemma 4 31B IT (W4A16) via vLLM with the `gemma4` tool-call and reasoning parsers, built on Google's ADK via swegemma. Per-task budget: 28 tool calls and 4–8 minutes. Tools: `read_file`, `run_command`, `edit_file`, `write_file`, `submit_patch`.
+The principal analyses use Gemma 4 31B IT (W4A16) via vLLM with the `gemma4` tool-call and reasoning parsers, built on Google's ADK via swegemma. Per-task budget: 28 tool calls and 4–8 minutes. Tools: `read_file`, `run_command`, `edit_file`, `write_file`, `submit_patch`.
 
 Two corpora: Sections 3–4's bug analysis covers 7 configurations × up to 3 samples × 95 development tasks = 1,140 runs, on a 4×A100 rig at N=5 concurrent tasks per GPU. Sections 5–7 use 38 of the same 95 development tasks, 3 samples each (114 runs per arm); Section 5 compares N=5 with N=8 (decode-matched to the scorer's L4 rate) and its leaderboard comparisons use screens run at N=5 and N=2; Section 6 uses N=1 (single-task concurrency for the ensemble test); Section 7 uses N=5 (pre-calibration). The Section 4 pipefix screen ran at N=2 workers per GPU (8 total across 4 replicas). Neither corpus is the hidden scoring set; the competition publicly shows 58 of roughly 120 hidden tasks from repositories disjoint from the four public training ones.
 
@@ -51,7 +49,7 @@ This is testable because the vLLM Gemma 4 tool-call parser is open-source (Apach
 
 We extracted the three pure parsing functions — which depend on nothing beyond Python stdlib — and ran them directly in `scripts/paper/repro_colon_split.py`: colon-rich delimited strings parsed correctly in all test cases. The specific bare-value and unclosed-delimiter fixtures truncate values or add spurious keys while retaining `old_string`. They do not reproduce the observed missing-key symptom; they do not rule out other generation/parser interactions.
 
-The control group independently confirms this: across all 14,127 `run_command` calls in the same corpus, 2,299 contained three or more colon characters (type hints, URLs, heredoc code) and **zero** showed any spurious or missing argument key. If the parser split on colons uniformly, `run_command` would fail at the same rate as `edit_file`. It does not.
+The control group independently confirms this: across all 14,127 `run_command` calls in the same corpus, 2,299 contained three or more colon characters (type hints, URLs, heredoc code) and **zero** showed any spurious or missing argument key. Uniform colon splitting would also affect these colon-dense `run_command` calls. We observe no such key corruption.
 
 ### 3.3 What the evidence says and does not say
 
@@ -82,7 +80,7 @@ This is a scaffold-level bug in our own prompt, not a defect in pytest, bash, or
 ```
 timeout 150 python -m pytest tests/path.py -x -q -k keyword > /tmp/t.log 2>&1; ec=$?; tail -25 /tmp/t.log; echo "EXIT:$ec"
 ```
-Redirect to a file, capture `$?` immediately after pytest (before any subsequent command can overwrite it), then show the tail and print the saved exit code explicitly. The agent now sees `EXIT:1` when tests fail.
+The measured fix saves pytest’s status immediately, then displays it as `EXIT:1` on failure. It does not propagate that status: the final `echo` still exits zero. Automation consuming process status should also end with `exit "$ec"`; that additional change was not evaluated here.
 
 A paired screen on familiar repositories (FastAPI, Rich) measured the local outcome: 38 development tasks × 3 samples = 114 runs per arm. The corrected arm resolved 44/114 (38.6%) vs. 35/114 (30.7%) for the original — W11/L2/T101, net +9, run-level sign-test p = 0.022. Keeping each task’s three repeats together gives task-block p = 0.125 (five task wins, one loss; `results/next_steps_20261106/pipefix_recovered_audit.json`). Explicit timeouts, including subsequently resolved patches, were 12 vs. 16 and empty patches decreased (24 vs. 27).
 
@@ -152,9 +150,9 @@ The paper's supporting code — detection scripts, aggregate evidence, the parse
 
 ## 10. Limitations
 
-Later eight-task development pilots also rejected extending T1 from eight to nine minutes (2/8 versus 3/8; the only win finished within eight minutes) and adding final-edit verification to E4B (0/8 versus 0/8). These small pilots establish neither equivalence nor a score forecast.
+Later eight-task pilots rejected T1@9 (3/8 versus 2/8; its only win finished within eight minutes) and E4B final-edit verification (0/8 in both arms). A subsequent frozen 38-task E4B scaffold screen on one L4 resolved 3/38 versus 6/38 (zero paired wins, three losses; p=0.25), failing its net ≥+3 gate. Candidate/baseline budgets differed: six/eight minutes and 50/28 calls. No transfer stage ran. These screens establish neither equivalence nor an isolated scaffold effect.
 
-The principal analyses use Gemma 4 31B; the later pilot also covers E4B. All use swegemma/ADK and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. For T1 and pipefix, repeat submissions on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a binomial task-sampling calculation addresses hypothetical draws of tasks, not repeat-run variance or a measured private-set uncertainty. We have not established that the private set changes between runs. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
+The principal analyses use Gemma 4 31B; later screens also cover E4B. All use swegemma/ADK and Python issue-resolution tasks. Section 3's mechanism investigation falsifies one hypothesis but leaves the actual cause open. Section 4's bug is from one prompt variant; other agents using a different verification command are not affected. The non-transfer finding in Section 5 rests on three public draws against a two-draw baseline. For T1 and pipefix, repeat submissions on the fixed 58-task public set varied by at most 1 task (T1@8: 10, 10; t1\_pipefix: 9, 8, 8); a binomial task-sampling calculation addresses hypothetical draws of tasks, not repeat-run variance or a measured private-set uncertainty. We have not established that the private set changes between runs. Section 6 is one ensemble design. Section 7's v1 p-value (0.041) does not clear a task-block permutation threshold (0.074), and all four variants share a training pipeline.
 
 ---
 
@@ -171,6 +169,6 @@ Code, evidence, and the executable parser tests are at https://github.com/dp-pcs
 - Jimenez, C. E., Yang, J., Wettig, A., Yao, S., Pei, K., Press, O., & Narasimhan, K. (2024). SWE-bench: Can Language Models Resolve Real-World GitHub Issues? *ICLR 2024*. arXiv:2310.06770.
 - Noorain, A., Mohanty, S., Banerjee, A., & Dasgupta, A. (2026). Invocation-Level Reliability of Tool-Using Agents. arXiv:2608.26189.
 - Patil, S. G., Zhang, T., Wang, X., & Gonzalez, J. E. (2023). Gorilla: Large Language Model Connected with Massive APIs. arXiv:2305.15334.
-- Zhang, Y., Motaali, S., Dinh, V. P., Piroutiniya, A., et al. (2026). The Double Measurement Confound in Agent Benchmarks. arXiv:2609.09218.
+- Zhang, Y., Motaali, S., Dinh, V. P., Piroutiniya, A., et al. (2026). The Double Measurement Confound in Agent Benchmarks: De-Scaffolding, Ground-Truth Scoring, and Reliability Beyond the Mean. arXiv:2609.09218.
 - Berkeley Function-Calling Leaderboard. https://gorilla.cs.berkeley.edu/leaderboard.html
 - Google. (2026). Agent Development Kit (ADK). https://google.github.io/adk-docs/

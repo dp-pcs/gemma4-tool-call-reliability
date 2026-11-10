@@ -13,6 +13,8 @@ The paper documents missing edit arguments, misleading shell-pipeline exit statu
 - `results/paper_track/measurement_repair_summary.json`: corrected termination accounting. Unknown termination is not normal completion; trace residuals are not measured grading time.
 - `results/paper_track/pipefix_summary.json`: 44/114 versus 35/114; run-level p=.02246 and task-block p=.125. Public outcomes were 9,8,8/58 versus T1's 10,10/58.
 
+- `results/paper_track/scaffold_screen_summary.json`: later E4B screen, candidate 3/38 versus baseline 6/38, zero paired wins and three losses. Unequal budgets prevent an isolated scaffold-effect claim; the frozen advancement gate failed.
+
 ## Reproduction
 
 ```bash
@@ -31,4 +33,4 @@ Offline checks verify the published arithmetic and parser fixtures. They do not 
 
 No organizer task statements, task source snapshots, reference/test patches, model traces, weights or credentials are included. Trace-based scripts require a participant's own inputs. Aggregate outcomes and our analysis code are released under Apache-2.0; the included parser functions retain attribution to vLLM contributors. See [LICENSE](LICENSE).
 
-Updated November 8, 2026 with assistance from OpenAI GPT-6 (Codex).
+Updated November 10, 2026 with assistance from OpenAI GPT-6 (Codex).
