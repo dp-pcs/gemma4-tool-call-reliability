@@ -1,8 +1,8 @@
 # Gemma 4 Tool-Call Reliability: Evidence and Reproduction
 
-Supporting materials for **Missing Edit Arguments and Misleading Test Status: Lessons from a Gemma 4 Coding Agent**, prepared for the [Gemma 4 Developer Agent Paper Track](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper).
+Supporting materials for **Missing Edit Arguments and Misleading Test Status: Lessons from a Gemma 4 Coding Agent**, submitted to the [Gemma 4 Developer Agent Paper Track](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper).
 
-The paper documents missing edit arguments, misleading shell-pipeline exit status, and limits of local evaluation. Missing arguments triggered explicit tool errors; their cause remains unresolved. The pipefix local gain did not improve public scores. Publication of these materials does not establish submission of the paper Writeup.
+The paper documents missing edit arguments, misleading shell-pipeline exit status, and limits of local evaluation. Missing arguments triggered explicit tool errors; their cause remains unresolved. The pipefix local gain did not improve public scores. The [Kaggle Writeup](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/writeups/missing-edit-arguments-and-misleading-test-status) was submitted on November 10, 2026; the authenticated page showed “Submitted!” after reload. Its title and subtitle were shortened to fit Kaggle’s field limits. Kaggle states the Writeup becomes publicly available when the hackathon closes; the full paper and evidence here are already public.
 
 ## Evidence
 
